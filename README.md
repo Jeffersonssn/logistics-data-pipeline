@@ -203,6 +203,8 @@ projeto/
 
 # ▶️ Como Executar
 
+Importante: Antes da execução, configure os parâmetros de conexão com o PostgreSQL e ajuste os diretórios de entrada, processamento e erro conforme o seu ambiente.
+
 Clone o repositório
 
 ```bash
