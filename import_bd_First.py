@@ -1,0 +1,398 @@
+import pandas as pd
+import psycopg2
+from psycopg2.extras import execute_values
+from pathlib import Path
+from datetime import datetime
+import shutil
+import time
+
+# ==========================================================
+# CONFIGURAÇÕES
+# ==========================================================
+
+PASTA_ENTRADA = Path(
+    r"C:\Users\jefferson.novaes\Desktop\Bots e Dashs\Db_Secundaria\Arquivos_Jms"
+)
+
+PASTA_PROCESSADOS = Path(
+    r"C:\Users\jefferson.novaes\Desktop\Bots e Dashs\Db_Secundaria\Retorno_Python"
+)
+
+PASTA_ERRO = Path(
+    r"C:\Users\jefferson.novaes\Desktop\Bots e Dashs\Db_Secundaria\Arquivos_Com_Erro"
+)
+
+DB_CONFIG = {
+    "host": "localhost",
+    "port": "***",
+    "database": "****",
+    "user": "****",
+    "password": "****"
+}
+
+# ==========================================================
+# MAPEAMENTO DAS COLUNAS
+# ==========================================================
+
+MAPEAMENTO = {
+    "Número de pedido JMS": "numero_pedido_jms",
+    "Número do lote": "numero_lote",
+    "Chip No.": "chip_no",
+    "Tipo de bipagem": "tipo_bipagem",
+    "Tempo de digitalização": "tempo_digitalizacao",
+    "Base de escaneamento": "base_escaneamento",
+    "Parada anterior ou próxima": "parada_anterior_ou_proxima",
+    "Saída do dia": "saida_do_dia",
+    "Quantidade de volumes": "quantidade_de_volumes",
+    "Peso": "peso",
+    "Tipo de peso": "tipo_de_peso",
+    "Tipo de produto": "tipo_de_produto",
+    "Modal": "modal",
+    "Base remetente": "base_remetente",
+    "Nome do Cliente": "nome_do_cliente",
+    "Digitalizador": "digitalizador",
+    "Digitalizador No.": "digitalizador_no",
+    "Correio de coleta ou entrega": "correio_de_coleta_ou_entrega",
+    "Número de correio de coleta ou entrega": "numero_de_correio_de_coleta_ou_entrega",
+    "Signatário": "signatario",
+    "Origem de dados": "origem_de_dados",
+    "Observação": "observacao",
+    "Tempo de upload": "tempo_de_upload",
+    "Dispositivo No.": "dispositivo_no",
+    "Celular No.": "celular_no",
+    "Comprimento": "comprimento",
+    "Largura": "largura",
+    "Altura": "altura",
+    "Peso volumétrico": "peso_volumetrico",
+    "CEP de origem": "cep_de_origem",
+    "CEP destino": "cep_destino",
+    "Número do ID": "numero_do_id",
+    "Selo de veículo": "selo_de_veiculo",
+    "Nome da linha": "nome_da_linha",
+    "Reserva No,": "reserva_no",
+    "Tipo problemático": "tipo_problematico",
+    "Descrição de Pacote Problemático": "descricao_de_pacote_problematico",
+    "Tipos de pacote não expedido": "tipos_de_pacote_nao_expedido",
+    "Descrição de pacotes não expedidos": "descricao_de_pacotes_nao_expedidos",
+    "Contato da área de agência": "contato_da_area_de_agencia",
+    "Endereço da área de agência": "endereco_da_area_de_agencia",
+    "Município de Destino": "municipio_de_destino",
+    "Estado da cidade de destino": "estado_da_cidade_de_destino",
+    "Base Destino": "base_destino",
+    "Nome do cliente": "nome_do_cliente_2",
+    "Peso Faturado": "peso_faturado",
+    "Tipo de produto.1": "tipo_de_produto_2"
+}
+
+# ==========================================================
+# LEITURA DOS ARQUIVOS
+# ==========================================================
+
+def ler_arquivo(arquivo):
+
+    if arquivo.suffix.lower() == ".csv":
+
+        return pd.read_csv(
+            arquivo,
+            sep=";",
+            dtype=str,
+            keep_default_na=False
+        )
+
+    elif arquivo.suffix.lower() == ".xlsx":
+
+        return pd.read_excel(
+            arquivo,
+            dtype=str,
+            engine="openpyxl"
+        )
+
+    return None
+
+
+# ==========================================================
+# TRATAMENTO DOS DADOS
+# ==========================================================
+
+def tratar_dados(df, nome_arquivo):
+
+    df.rename(columns=MAPEAMENTO, inplace=True)
+
+    # Remove espaços no início/fim dos textos
+    for coluna in df.columns:
+        if df[coluna].dtype == "object":
+            df[coluna] = df[coluna].fillna("").astype(str).str.strip()
+
+    # Padroniza a data
+    df["tempo_digitalizacao"] = pd.to_datetime(
+        df["tempo_digitalizacao"],
+        errors="coerce"
+    )
+
+    datas_invalidas = df["tempo_digitalizacao"].isna().sum()
+
+    if datas_invalidas > 0:
+        print(f"Datas inválidas encontradas: {datas_invalidas}")
+
+    df = df[df["tempo_digitalizacao"].notna()]
+
+    df["tempo_digitalizacao"] = df["tempo_digitalizacao"].dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    registros_lidos = len(df)
+
+    # Remove duplicados dentro do próprio arquivo
+    df.drop_duplicates(
+        subset=["numero_pedido_jms", "tempo_digitalizacao"],
+        inplace=True
+    )
+
+    registros_validos = len(df)
+
+    duplicados_arquivo = registros_lidos - registros_validos
+
+    df["arquivo_origem"] = nome_arquivo
+
+    df.fillna("", inplace=True)
+
+    return df, registros_lidos, registros_validos, duplicados_arquivo
+
+
+# ==========================================================
+# INSERÇÃO NO BANCO
+# ==========================================================
+
+def inserir_dados(cursor, df):
+
+    if df.empty:
+        return 0
+
+    dados = [tuple(x) for x in df.values]
+
+    sql = f"""
+    INSERT INTO raw.firstfranqueados_raw
+    ({",".join(df.columns)})
+    VALUES %s
+    ON CONFLICT (numero_pedido_jms, tempo_digitalizacao)
+    DO NOTHING
+    """
+
+    execute_values(cursor, sql, dados, page_size=5000)
+
+    return cursor.rowcount
+
+
+# ==========================================================
+# VERIFICA SE O ARQUIVO JÁ FOI PROCESSADO
+# ==========================================================
+
+def arquivo_ja_processado(cursor, nome_arquivo):
+
+    cursor.execute(
+        """
+        SELECT 1
+        FROM raw.arquivos_processados
+        WHERE nome_arquivo = %s
+        """,
+        (nome_arquivo,)
+    )
+
+    return cursor.fetchone() is not None
+
+
+# ==========================================================
+# REGISTRA SUCESSO
+# ==========================================================
+
+def registrar_sucesso(cursor, nome_arquivo, registros_lidos, registros_validos, registros_inseridos, inicio, fim):
+
+    cursor.execute(
+        """
+        INSERT INTO raw.arquivos_processados
+        (nome_arquivo, registros_importados, data_inicio, data_fim, status)
+        VALUES (%s, %s, %s, %s, %s)
+        """,
+        (nome_arquivo, registros_inseridos, inicio, fim, "SUCESSO")
+    )
+
+
+# ==========================================================
+# REGISTRA ERRO
+# ==========================================================
+
+def registrar_erro(cursor, nome_arquivo, inicio, erro):
+
+    cursor.execute(
+        """
+        INSERT INTO raw.arquivos_processados
+        (nome_arquivo, data_inicio, data_fim, status, mensagem_erro)
+        VALUES (%s, %s, %s, %s, %s)
+        """,
+        (nome_arquivo, inicio, datetime.now(), "ERRO", str(erro))
+    )
+
+
+# ==========================================================
+# RESUMO FINAL
+# ==========================================================
+
+def resumo(
+    total_arquivos,
+    arquivos_processados,
+    arquivos_ignorados,
+    arquivos_com_erro,
+    total_lidos,
+    total_validos,
+    total_inseridos,
+    total_duplicados_arquivo,
+    tempo_total
+):
+
+    total_ignorados_banco = max(total_validos - total_inseridos, 0)
+
+    print()
+    print("=" * 70)
+    print("RESUMO DA IMPORTAÇÃO")
+    print("=" * 70)
+    print(f"Arquivos encontrados......: {total_arquivos}")
+    print(f"Arquivos processados......: {arquivos_processados}")
+    print(f"Arquivos ignorados........: {arquivos_ignorados}")
+    print(f"Arquivos com erro.........: {arquivos_com_erro}")
+    print()
+    print(f"Registros lidos...........: {total_lidos:,}")
+    print(f"Registros válidos.........: {total_validos:,}")
+    print(f"Duplicados no arquivo.....: {total_duplicados_arquivo:,}")
+    print(f"Registros inseridos.......: {total_inseridos:,}")
+    print(f"Ignorados pelo banco......: {total_ignorados_banco:,}")
+    print()
+    print(f"Tempo total...............: {tempo_total:.2f} segundos")
+
+    if tempo_total > 60:
+        print(f"Tempo total...............: {tempo_total / 60:.2f} minutos")
+
+    print("=" * 70)
+    print("PROCESSAMENTO CONCLUÍDO!")
+
+
+# ==========================================================
+# PROCESSO PRINCIPAL
+# ==========================================================
+
+def main():
+
+    tempo_inicio = time.time()
+
+    # Garante que as pastas de destino existam
+    PASTA_PROCESSADOS.mkdir(parents=True, exist_ok=True)
+    PASTA_ERRO.mkdir(parents=True, exist_ok=True)
+
+    conn = psycopg2.connect(**DB_CONFIG)
+    cursor = conn.cursor()
+
+    arquivos = sorted(PASTA_ENTRADA.glob("*"))
+
+    total_arquivos = len(arquivos)
+    arquivos_processados = 0
+    arquivos_ignorados = 0
+    arquivos_com_erro = 0
+    total_lidos = 0
+    total_validos = 0
+    total_inseridos = 0
+    total_duplicados_arquivo = 0
+
+    print("=" * 70)
+    print("INICIANDO IMPORTAÇÃO")
+    print("=" * 70)
+
+    for indice, arquivo in enumerate(arquivos, start=1):
+
+        nome_arquivo = arquivo.name
+
+        print()
+        print(f"[{indice}/{total_arquivos}] {nome_arquivo}")
+
+        if arquivo_ja_processado(cursor, nome_arquivo):
+            arquivos_ignorados += 1
+            print("Arquivo já processado.")
+            continue
+
+        inicio = datetime.now()
+        inicio_timer = time.time()
+
+        try:
+
+            df = ler_arquivo(arquivo)
+
+            if df is None:
+                print("Formato não suportado.")
+                continue
+
+            df, registros_lidos, registros_validos, duplicados_arquivo = tratar_dados(df, nome_arquivo)
+
+            registros_inseridos = inserir_dados(cursor, df)
+
+            fim = datetime.now()
+
+            registrar_sucesso(cursor, nome_arquivo, registros_lidos, registros_validos, registros_inseridos, inicio, fim)
+
+            conn.commit()
+
+            shutil.move(str(arquivo), str(PASTA_PROCESSADOS / nome_arquivo))
+
+            tempo_arquivo = time.time() - inicio_timer
+
+            total_lidos += registros_lidos
+            total_validos += registros_validos
+            total_inseridos += registros_inseridos
+            total_duplicados_arquivo += duplicados_arquivo
+
+            arquivos_processados += 1
+
+            ignorados_banco = max(registros_validos - registros_inseridos, 0)
+
+            print(f"Lidos................: {registros_lidos:,}")
+            print(f"Válidos..............: {registros_validos:,}")
+            print(f"Duplicados Arquivo...: {duplicados_arquivo:,}")
+            print(f"Inseridos............: {registros_inseridos:,}")
+            print(f"Ignorados Banco......: {ignorados_banco:,}")
+            print(f"Tempo................: {tempo_arquivo:.2f} segundos")
+
+        except Exception as erro:
+
+            conn.rollback()
+
+            registrar_erro(cursor, nome_arquivo, inicio, erro)
+
+            conn.commit()
+
+            shutil.move(str(arquivo), str(PASTA_ERRO / nome_arquivo))
+
+            arquivos_com_erro += 1
+
+            print()
+            print("ERRO AO PROCESSAR O ARQUIVO")
+            print(str(erro))
+
+    cursor.close()
+    conn.close()
+
+    tempo_total = time.time() - tempo_inicio
+
+    resumo(
+        total_arquivos,
+        arquivos_processados,
+        arquivos_ignorados,
+        arquivos_com_erro,
+        total_lidos,
+        total_validos,
+        total_inseridos,
+        total_duplicados_arquivo,
+        tempo_total
+    )
+
+
+# ==========================================================
+# EXECUÇÃO
+# ==========================================================
+
+if __name__ == "__main__":
+    main()
