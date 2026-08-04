@@ -14,8 +14,9 @@ Como solução, foi desenvolvida uma pipeline automatizada utilizando Python e P
 
 ---
 
-> **<img width="1774" height="887" alt="image" src="https://github.com/user-attachments/assets/f516067b-b4a6-45ca-af9b-ce588ced2bd4" />
-** Fluxo completo da pipeline.
+> **Fluxo completo da pipeline.**
+> <img width="1774" height="887" alt="image" src="https://github.com/user-attachments/assets/f516067b-b4a6-45ca-af9b-ce588ced2bd4" />
+
 
 ---
 
@@ -80,11 +81,6 @@ PostgreSQL
         ▼
 Consultas SQL / Power BI
 ```
-
-> **📷 Inserir imagem:** Fluxograma da arquitetura.
-
----
-
 # ⚙️ Principais Funcionalidades
 
 ## 📂 Importação Automática
@@ -160,7 +156,7 @@ Responsável por registrar:
 
 ---
 
-> **📷 Inserir print:** Estrutura das tabelas no PostgreSQL.
+> <img width="1524" height="948" alt="image" src="https://github.com/user-attachments/assets/59c1ef17-61e1-465e-a0d6-d072050eeb59" />
 
 ---
 
@@ -200,7 +196,8 @@ projeto/
 └── .gitignore
 ```
 
-> **📷 Inserir print:** Estrutura do projeto no VS Code.
+> <img width="824" height="962" alt="image" src="https://github.com/user-attachments/assets/7266e8e1-70d8-44ed-b27d-6c7512af1b74" />
+
 
 ---
 
@@ -244,7 +241,7 @@ Validando registros...
 Processamento concluído com sucesso.
 ```
 
-> **📷 Inserir print:** Terminal executando a pipeline.
+> <img width="1496" height="214" alt="image" src="https://github.com/user-attachments/assets/79f1a2a6-fe82-42cb-a61c-02d4b93f0791" />
 
 ---
 
